@@ -4,11 +4,16 @@ local TextBoxService = game:GetService("TextService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
+local selectedSkillNoCD = nil
+local isSkillNoCDActive = false
+local isAutoWinActive = true
 local playerName = player.Name
-
--- Skill Data
+local HttpService = game:GetService("HttpService")
+local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
 local skillData = {
     {name = "Earthshaker", id = "132004", image = "rbxassetid://135296483678943"},
+    {name = "Duel Flame Slash", id = "133031", image = "rbxassetid://138370561873282"},
+    {name = "Shadow Spider", id = "133030", image = "rbxassetid://136869074528315"},
     {name = "Deadly hook", id = "132003", image = "rbxassetid://91143148401167"},
     {name = "Mad shoot", id = "132002", image = "rbxassetid://106907024318493"},
     {name = "Heal potion", id = "133911", image = "rbxassetid://100993928459228"},
@@ -65,6 +70,192 @@ local skillData = {
 
 local selectedSkills = {}
 
+if isMobile then
+    game:GetService("Players").LocalPlayer.PlayerGui.Lobby.Enabled = true
+    game:GetService("Players").LocalPlayer.PlayerGui.Lobby.UI_Skill.Visible = true
+    game:GetService("Players").LocalPlayer.PlayerGui.MobileScr.ControlFrame.USE.Visible = false
+    game:GetService("Players").LocalPlayer.PlayerGui.MobileScr.ControlFrame.USE2.Visible = false
+    
+    game:GetService("Players").LocalPlayer.PlayerGui.Lobby.UI_Skill.List.Skill3.Size = UDim2.new(1.5, 0, 1.5, 0)
+    game:GetService("Players").LocalPlayer.PlayerGui.Lobby.UI_Skill.List.Skill2.Size = UDim2.new(1.5, 0, 1.5, 0)
+    
+end
+
+game:GetService("Players").LocalPlayer.PlayerGui.Lobby.Enabled = true
+game:GetService("Players").LocalPlayer.PlayerGui.Lobby.UI_Skill.Visible = true
+
+local function findPlayerInGroup(groupName)
+    local group = workspace:FindFirstChild("Scene") and workspace.Scene:FindFirstChild("Function") and workspace.Scene.Function:FindFirstChild("DuelEnter")
+    if group then
+        local duelGroup = group:FindFirstChild(groupName)
+        if duelGroup then
+            local transPos1 = duelGroup:FindFirstChild("TransPos1")
+            local transPos2 = duelGroup:FindFirstChild("TransPos2")
+            
+            -- Функция для поиска игрока по Name или DisplayName
+            local function findPlayerName(surfaceGui)
+                if surfaceGui and surfaceGui:FindFirstChild("Users") then
+                    for _, child in ipairs(surfaceGui.Users:GetChildren()) do
+                        if child:IsA("TextLabel") then
+                            if child.Text == playerName or child.Text == player.DisplayName then
+                                return true
+                            end
+                        end
+                    end
+                end
+                return false
+            end
+            
+            -- Проверяем TransPos1
+            if transPos1 and transPos1:FindFirstChild("SurfaceGui") then
+                if findPlayerName(transPos1.SurfaceGui) then
+                    print("Найден игрок " .. playerName .. " в группе " .. groupName .. " на позиции TransPos1.")
+                    return transPos1, transPos2
+                end
+            end
+            
+            -- Проверяем TransPos2
+            if transPos2 and transPos2:FindFirstChild("SurfaceGui") then
+                if findPlayerName(transPos2.SurfaceGui) then
+                    print("Найден игрок " .. playerName .. " в группе " .. groupName .. " на позиции TransPos2.")
+                    return transPos2, transPos1
+                end
+            end
+        end
+    end
+    return nil, nil
+end
+
+-- Функция для телепортации за спину врага
+local function teleportBehindEnemy(enemyPlayer)
+    if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then
+        print("Ошибка: У вашего персонажа нет HumanoidRootPart.")
+        return
+    end
+    
+    if not enemyPlayer.Character or not enemyPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        print("Ошибка: У противника " .. enemyPlayer.Name .. " нет персонажа или HumanoidRootPart.")
+        return
+    end
+    
+    local enemyRootPart = enemyPlayer.Character.HumanoidRootPart
+    local offset = CFrame.new(0, 0, 5) -- Смещение за спину противника (4 studs)
+    local newPosition = (enemyRootPart.CFrame * offset).Position
+    
+    player.Character.HumanoidRootPart.CFrame = CFrame.new(newPosition, newPosition + enemyRootPart.CFrame.LookVector)
+    print("Телепортировался за спину противника!")
+end
+
+-- Функция для полета за спину противника с обновлением позиции
+local function flyBehindEnemy(enemyPlayer)
+    while isAutoWinActive do
+        if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then
+            break
+        end
+        
+        if not enemyPlayer.Character or not enemyPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            print("Ошибка: У противника " .. enemyPlayer.Name .. " нет персонажа или HumanoidRootPart.")
+            break
+        end
+        
+        local enemyRootPart = enemyPlayer.Character.HumanoidRootPart
+        local offset = CFrame.new(0, 0, 5) -- Смещение за спину противника (5 studs)
+        local newPosition = (enemyRootPart.CFrame * offset).Position
+        
+        player.Character.HumanoidRootPart.CFrame = CFrame.new(newPosition, newPosition + enemyRootPart.CFrame.LookVector)
+        
+        task.wait(0.001) -- Ждем 0.1 секунды перед следующим обновлением
+    end
+end
+
+-- Функция для поиска имени врага
+local function findEnemyName(surfaceGui)
+    if surfaceGui and surfaceGui:FindFirstChild("Users") then
+        for _, child in ipairs(surfaceGui.Users:GetChildren()) do
+            if child:IsA("TextLabel") then
+                local enemyPlayer = nil
+                for _, player in ipairs(Players:GetPlayers()) do
+                    if player.Name == child.Text or player.DisplayName == child.Text then
+                        enemyPlayer = player
+                        break
+                    end
+                end
+                if enemyPlayer and enemyPlayer.Name ~= playerName then
+                    return enemyPlayer.Name
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- Основная функция Auto Win
+local function autoWinFunction()
+    while isAutoWinActive do
+        local groups = {"1V1Group1", "1V1Group2", "1V1Group3", "1V1Group4", "1V1Group5", "1V1Group6", "2V2Group1"}
+        
+        for _, groupName in ipairs(groups) do
+            if not isAutoWinActive then
+                break
+            end
+
+            local myPosition, enemyPosition = findPlayerInGroup(groupName)
+            if myPosition and enemyPosition then
+                local enemyName1 = nil
+                local enemyName2 = nil
+                
+                -- Если ваш Name найден в TransPos1, ищем противников в TransPos2
+                if myPosition:FindFirstChild("SurfaceGui") then
+                    enemyName1 = findEnemyName(enemyPosition.SurfaceGui)
+                -- Если ваш Name найден в TransPos2, ищем противников в TransPos1
+                elseif enemyPosition:FindFirstChild("SurfaceGui") then
+                    enemyName1 = findEnemyName(myPosition.SurfaceGui)
+                end
+
+                -- Если группа 2V2, ищем второго врага
+                if groupName == "2V2Group1" then
+                    if myPosition:FindFirstChild("SurfaceGui") then
+                        enemyName2 = findEnemyName(enemyPosition.SurfaceGui)
+                    elseif enemyPosition:FindFirstChild("SurfaceGui") then
+                        enemyName2 = findEnemyName(myPosition.SurfaceGui)
+                    end
+                end
+
+                -- Обрабатываем первого врага
+                if enemyName1 and enemyName1 ~= playerName then
+                    local enemyPlayer1 = Players:FindFirstChild(enemyName1)
+                    if enemyPlayer1 then
+                        print("Найден противник 1: " .. enemyPlayer1.Name)
+                        
+                        -- Телепортируемся за спину первого врага
+                        teleportBehindEnemy(enemyPlayer1)
+                        
+                        -- Начинаем обновлять позицию каждые 0.1 секунды
+                        flyBehindEnemy(enemyPlayer1)
+                        
+                        -- Если первый враг умер, переключаемся на второго
+                        if not enemyPlayer1.Character or not enemyPlayer1.Character:FindFirstChild("Humanoid") or enemyPlayer1.Character.Humanoid.Health <= 0 then
+                            if enemyName2 and enemyName2 ~= playerName then
+                                local enemyPlayer2 = Players:FindFirstChild(enemyName2)
+                                if enemyPlayer2 then
+                                    print("Первый враг умер. Переключаемся на второго врага: " .. enemyPlayer2.Name)
+                                    
+                                    -- Телепортируемся за спину второго врага
+                                    teleportBehindEnemy(enemyPlayer2)
+                                    
+                                    -- Начинаем обновлять позицию каждые 0.1 секунды
+                                    flyBehindEnemy(enemyPlayer2)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        
+        task.wait(0.001) -- Задержка для предотвращения лагов
+    end
+end
 -- Replace the setupAntiLava function with this simpler version:
 local function setupAntiLava()
     local lavaLand = workspace.Map.MatchDuel.LavaLand
@@ -109,7 +300,9 @@ local settings = {
     showAttackRange = false,
     attackRange = 10,
     isAntiLavaEnabled = false,
-    isVIPTagEnabled = false
+    isAutoWinActive = false,
+    flySpeed = 150,
+    otherPlayersFlySpeed = 150
 }
 
 local lastGuiState = {
@@ -121,8 +314,7 @@ local lastGuiState = {
     showAttackRange = false,
     selectedSkills = {},
     isGuiOpen = true,
-    isAntiLavaEnabled = false,
-    isVIPTagEnabled = false
+    isAntiLavaEnabled = false
 }
 
 -- UI Theme
@@ -136,7 +328,6 @@ local theme = {
     checkboxBorder = Color3.fromRGB(60, 60, 60)
 }
 
-
 local function updateGuiState()
     lastGuiState.isSkillFunctionActive = settings.isSkillFunctionActive
     lastGuiState.isAutoSkillActive = settings.isAutoSkillActive
@@ -147,9 +338,10 @@ local function updateGuiState()
     lastGuiState.selectedSkills = table.clone(selectedSkills)
     lastGuiState.isGuiOpen = settings.isWindowOpen
     lastGuiState.isAntiLavaEnabled = settings.isAntiLavaEnabled
-    lastGuiState.isVIPTagEnabled = settings.isVIPTagEnabled
+    lastGuiState.isAutoWinActive = settings.isAutoWinActive
+    lastGuiState.selectedSkillNoCD = selectedSkillNoCD
+    lastGuiState.isSkillNoCDActive = isSkillNoCDActive
 end
-
 
 local function applyGuiState(gui)
     if not gui or not gui:FindFirstChild("MainFrame") then return end
@@ -161,55 +353,36 @@ local function applyGuiState(gui)
             button.Text = value and (onText or "ON") or (offText or "OFF")
         end
     end
-    
-    -- Then use it to update all buttons
+    -- Обновляем остальные кнопки
     updateButton("SkillToggle", lastGuiState.isSkillFunctionActive, "Skills: ON", "Skills: OFF")
     updateButton("AutoSkill", lastGuiState.isAutoSkillActive, "Auto Skill: ON", "Auto Skill: OFF")
     updateButton("VIPSettings", lastGuiState.areVIPSettingsActive, "VIP: ON", "VIP: OFF")
     updateButton("AutoAttack", lastGuiState.isAutoAttackEnabled, "Auto Attack: ON", "Auto Attack: OFF")
     updateButton("RangeToggle", lastGuiState.showAttackRange, "Range: ON", "Range: OFF")
     updateButton("AntiLava", lastGuiState.isAntiLavaEnabled, "Anti-Lava: ON", "Anti-Lava: OFF")
-    updateButton("VIPTag", lastGuiState.isVIPTagEnabled, "VIP Tag: ON", "VIP Tag: OFF")
-
-    -- Update device state
+    updateButton("AutoWin", lastGuiState.isAutoWinActive, "Auto Win: ON", "Auto Win: OFF")
+    
+    -- Обновляем состояние устройства
     local deviceButton = mainFrame:FindFirstChild("Device", true)
     if deviceButton then
         deviceButton.Text = "Device: " .. tostring(lastGuiState.deviceStateIndex)
     end
     
-    -- Restore visibility
+    -- Восстанавливаем видимость
     mainFrame.Visible = lastGuiState.isGuiOpen
     local minimizedIcon = gui:FindFirstChild("MinimizedIcon")
     if minimizedIcon then
         minimizedIcon.Visible = not lastGuiState.isGuiOpen
     end
-    
-    -- Restore selected skills
-    local skillsList = mainFrame:FindFirstChild("skillsList", true)
-    if skillsList then
-        for _, child in pairs(skillsList:GetChildren()) do
-            if child:IsA("Frame") then
-                local checkbox = child:FindFirstChild("checkbox")
-                if checkbox then
-                    local fill = checkbox:FindFirstChild("fill")
-                    if fill then
-                        fill.BackgroundTransparency = table.find(lastGuiState.selectedSkills, child.Name) and 0 or 1
-                    end
-                end
-            end
-        end
-    end
 end
 
-    settings.isSkillFunctionActive = lastGuiState.isSkillFunctionActive
-    settings.isAutoSkillActive = lastGuiState.isAutoSkillActive
-    settings.areVIPSettingsActive = lastGuiState.areVIPSettingsActive
-    settings.deviceStateIndex = lastGuiState.deviceStateIndex
-    settings.isAutoAttackEnabled = lastGuiState.isAutoAttackEnabled
-    settings.showAttackRange = lastGuiState.showAttackRange
-    settings.isAntiLavaEnabled = lastGuiState.isAntiLavaEnabled
-    settings.isVIPTagEnabled = lastGuiState.isVIPTagEnabled
-
+settings.isSkillFunctionActive = lastGuiState.isSkillFunctionActive
+settings.isAutoSkillActive = lastGuiState.isAutoSkillActive
+settings.areVIPSettingsActive = lastGuiState.areVIPSettingsActive
+settings.deviceStateIndex = lastGuiState.deviceStateIndex
+settings.isAutoAttackEnabled = lastGuiState.isAutoAttackEnabled
+settings.showAttackRange = lastGuiState.showAttackRange
+settings.isAntiLavaEnabled = lastGuiState.isAntiLavaEnabled
 
 -- Add this after the theme table and before createModernButton
 local function playEnhancedAnimations(mainFrame, loadingFrame, loadingLogo, spinner, contentFrame, skipAnimation)
@@ -314,14 +487,14 @@ end
 local function createModernButton(name, text, size, position, parent)
     local button = Instance.new("TextButton")
     button.Name = name
-    button.Size = size
+    button.Size = isMobile and size + UDim2.new(0, 0, 0, 20) or size -- Увеличиваем размер на телефоне
     button.Position = position
     button.BackgroundColor3 = theme.accent
     button.BackgroundTransparency = 0.1
     button.Text = text
     button.TextColor3 = theme.text
     button.Font = Enum.Font.GothamMedium
-    button.TextSize = 14
+    button.TextSize = isMobile and 18 or 14 -- Увеличиваем размер текста на телефоне
     button.Parent = parent
     
     local corner = Instance.new("UICorner")
@@ -338,6 +511,7 @@ local function createModernButton(name, text, size, position, parent)
     return button
 end
 
+-- Функция для создания чекбокса
 local function createCheckbox()
     local checkbox = Instance.new("Frame")
     checkbox.Size = UDim2.new(0, 20, 0, 20)
@@ -362,10 +536,11 @@ local function createCheckbox()
     return checkbox, fill
 end
 
+-- Функция для создания элементов списка навыков
 local function createSkillEntry(skillInfo, parent)
     local entry = Instance.new("Frame")
     entry.Name = skillInfo.name
-    entry.Size = UDim2.new(0.95, 0, 0, 50)
+    entry.Size = isMobile and UDim2.new(0.95, 0, 0, 70) or UDim2.new(0.95, 0, 0, 50)
     entry.BackgroundColor3 = theme.foreground
     entry.BackgroundTransparency = 0.5
     entry.Parent = parent
@@ -374,13 +549,30 @@ local function createSkillEntry(skillInfo, parent)
     checkbox.Position = UDim2.new(0.02, 0, 0.5, -10)
     checkbox.Parent = entry
 
-    -- Initialize checkbox state based on selectedSkills
-    local isSelected = table.find(selectedSkills, skillInfo.id) ~= nil
-    fill.BackgroundTransparency = isSelected and 0 or 1
+    -- Обработка нажатия на чекбокс
+    checkbox.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            local isSelected = fill.BackgroundTransparency == 1
+            TweenService:Create(fill, TweenInfo.new(0.3), {
+                BackgroundTransparency = isSelected and 0 or 1
+            }):Play()
+            
+            if isSelected then
+                table.insert(selectedSkills, skillInfo.id)
+            else
+                for i, id in ipairs(selectedSkills) do
+                    if id == skillInfo.id then
+                        table.remove(selectedSkills, i)
+                        break
+                    end
+                end
+            end
+        end
+    end)
 
     local icon = Instance.new("ImageLabel")
-    icon.Size = UDim2.new(0, 40, 0, 40)
-    icon.Position = UDim2.new(0.12, 0, 0.5, -20)
+    icon.Size = isMobile and UDim2.new(0, 50, 0, 50) or UDim2.new(0, 40, 0, 40)
+    icon.Position = UDim2.new(0.12, 0, 0.5, -25)
     icon.BackgroundTransparency = 1
     icon.Image = skillInfo.image
     icon.Parent = entry
@@ -393,50 +585,12 @@ local function createSkillEntry(skillInfo, parent)
     nameLabel.TextColor3 = theme.text
     nameLabel.TextXAlignment = Enum.TextXAlignment.Left
     nameLabel.Font = Enum.Font.GothamMedium
-    nameLabel.TextSize = 14
+    nameLabel.TextSize = isMobile and 16 or 14
     nameLabel.Parent = entry
 
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 4)
     corner.Parent = entry
-
-    local isSelected = false
-    
-    local function updateSelection()
-        isSelected = not isSelected
-        TweenService:Create(fill, TweenInfo.new(0.3), {
-            BackgroundTransparency = isSelected and 0 or 1
-        }):Play()
-        
-        if isSelected then
-            table.insert(selectedSkills, skillInfo.id)
-        else
-            for i, id in ipairs(selectedSkills) do
-                if id == skillInfo.id then
-                    table.remove(selectedSkills, i)
-                    break
-                end
-            end
-        end
-    end
-
-    entry.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            updateSelection()
-        end
-    end)
-
-    entry.MouseEnter:Connect(function()
-        TweenService:Create(entry, TweenInfo.new(0.2), {
-            BackgroundTransparency = 0.3
-        }):Play()
-    end)
-
-    entry.MouseLeave:Connect(function()
-        TweenService:Create(entry, TweenInfo.new(0.2), {
-            BackgroundTransparency = 0.5
-        }):Play()
-    end)
 
     return entry
 end
@@ -489,6 +643,41 @@ local function enableResizing(mainFrame)
     UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             isResizing = false
+        end
+    end)
+end
+
+local function enableDragging(frame, dragButton)
+    local dragToggle = false
+    local dragStart = nil
+    local startPos = nil
+
+    dragButton.InputBegan:Connect(function(input)
+        if (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1) and not dragToggle then
+            dragToggle = true
+            dragStart = input.Position
+            startPos = frame.Position
+        end
+    end)
+
+    dragButton.InputEnded:Connect(function(input)
+        if (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1) and dragToggle then
+            dragToggle = false
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement then
+            if dragToggle then
+                local delta = input.Position - dragStart
+                local newPosition = UDim2.new(
+                    startPos.X.Scale,
+                    startPos.X.Offset + delta.X,
+                    startPos.Y.Scale,
+                    startPos.Y.Offset + delta.Y
+                )
+                frame.Position = newPosition
+            end
         end
     end)
 end
@@ -592,7 +781,7 @@ local function createGUI()
 
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0.25, 0, 0.4, 0)
+    mainFrame.Size = isMobile and UDim2.new(0.4, 0, 0.6, 0) or UDim2.new(0.25, 0, 0.4, 0)
     mainFrame.Position = settings.windowPosition
     mainFrame.BackgroundColor3 = theme.background
     mainFrame.BackgroundTransparency = 0.1
@@ -753,35 +942,30 @@ local function createGUI()
     miscListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
     miscListLayout.VerticalAlignment = Enum.VerticalAlignment.Top
 
+    if isMobile then
+        miscScrollFrame.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Touch then
+                local startPos = input.Position
+                local startScrollPosition = miscScrollFrame.CanvasPosition
+
+                input.Changed:Connect(function()
+                    if input.UserInputState == Enum.UserInputState.Change then
+                        local delta = input.Position - startPos
+                        miscScrollFrame.CanvasPosition = Vector2.new(
+                            startScrollPosition.X,
+                            startScrollPosition.Y - delta.Y
+                        )
+                    end
+                end)
+            end
+        end)
+    end
+
     local vipSettingsButton = createModernButton("VIPSettings",
         settings.areVIPSettingsActive and "VIP: ON" or "VIP: OFF",
         UDim2.new(0.9, 0, 0, 40),  -- Fixed height for buttons
         UDim2.new(0, 0, 0, 0),  -- Position will be handled by UIListLayout
         miscScrollFrame)
-
-    
-    local vipTagButton = createModernButton("VIPTag",
-        "VIP Tag: OFF",
-        UDim2.new(0.9, 0, 0, 40),
-        UDim2.new(0, 0, 0, 0),
-        miscScrollFrame)
-    
-    if vipTagButton then
-        vipTagButton.MouseButton1Click:Connect(function()
-            settings.isVIPTagEnabled = not settings.isVIPTagEnabled
-            vipTagButton.Text = settings.isVIPTagEnabled and "VIP Tag: ON" or "VIP Tag: OFF"
-            updateGuiState()
-    
-            workspace.Event.PlayerSetting_RemoteEvent:FireServer({
-                TYPE = "ChangeMySetting",
-                Data = {
-                    Str = "HideVIPTag",
-                    Value = settings.isVIPTagEnabled
-                }
-            })
-        end)
-    end
-
 
     local deviceButton = createModernButton("Device",
         "Device: " .. tostring(settings.deviceStateIndex),
@@ -794,21 +978,196 @@ local function createGUI()
         UDim2.new(0.9, 0, 0, 40),
         UDim2.new(0, 0, 0, 0),
         miscScrollFrame)
+
+    local autoWinButton = createModernButton("AutoWin",
+        settings.isAutoWinActive and "Auto Win: ON" or "Auto Win: OFF",
+        UDim2.new(0.9, 0, 0, 40),
+        UDim2.new(0, 0, 0, 0),
+        miscScrollFrame)
+
+    autoWinButton.MouseButton1Click:Connect(function()
+        settings.isAutoWinActive = not settings.isAutoWinActive
+        isAutoWinActive = settings.isAutoWinActive  -- Синхронизация переменных
+        autoWinButton.Text = settings.isAutoWinActive and "Auto Win: ON" or "Auto Win: OFF"
+        updateGuiState()
+        
+        if settings.isAutoWinActive then
+            spawn(function()
+                while isAutoWinActive do
+                    autoWinFunction()
+                    task.wait(0.1)  -- Добавляем задержку для предотвращения лагов
+                end
+            end)
+        else
+            isAutoWinActive = false
+        end
+    end)
     
-antiLavaButton.MouseButton1Click:Connect(function()
-    settings.isAntiLavaEnabled = not settings.isAntiLavaEnabled
-    antiLavaButton.Text = settings.isAntiLavaEnabled and "Anti-Lava: ON" or "Anti-Lava: OFF"
-    updateGuiState()
-    
-    if settings.isAntiLavaEnabled then
-        setupAntiLava()
-    else
-        local platform = workspace:FindFirstChild("InvisiblePlatform")
-        if platform then
-            platform:Destroy()
+    antiLavaButton.MouseButton1Click:Connect(function()
+        settings.isAntiLavaEnabled = not settings.isAntiLavaEnabled
+        antiLavaButton.Text = settings.isAntiLavaEnabled and "Anti-Lava: ON" or "Anti-Lava: OFF"
+        updateGuiState()
+        
+        if settings.isAntiLavaEnabled then
+            setupAntiLava()
+        else
+            local platform = workspace:FindFirstChild("InvisiblePlatform")
+            if platform then
+                platform:Destroy()
+            end
+        end
+    end)
+
+    -- Добавляем кнопку "Skill no CD" с выпадающим списком
+    local skillNoCDButton = Instance.new("TextButton")
+    skillNoCDButton.Name = "SkillNoCDButton"
+    skillNoCDButton.Size = UDim2.new(0.9, 0, 0, 40)
+    skillNoCDButton.Position = UDim2.new(0.05, 0, 0, 0)
+    skillNoCDButton.BackgroundColor3 = theme.accent
+    skillNoCDButton.BackgroundTransparency = 0.1
+    skillNoCDButton.Text = "Skill no CD (None)"
+    skillNoCDButton.TextColor3 = theme.text
+    skillNoCDButton.Font = Enum.Font.GothamMedium
+    skillNoCDButton.TextSize = 14
+    skillNoCDButton.TextXAlignment = Enum.TextXAlignment.Left
+    skillNoCDButton.Parent = miscScrollFrame
+
+    local arrow = Instance.new("TextButton")
+    arrow.Name = "Arrow"
+    arrow.Size = UDim2.new(0.1, 0, 1, 0)
+    arrow.Position = UDim2.new(0.9, 0, 0, 0)
+    arrow.BackgroundTransparency = 1
+    arrow.Text = "▼"
+    arrow.TextColor3 = theme.text
+    arrow.Font = Enum.Font.GothamMedium
+    arrow.TextSize = 14
+    arrow.Parent = skillNoCDButton
+
+    local skillsListNoCD = Instance.new("ScrollingFrame")
+    skillsListNoCD.Name = "SkillsListNoCD"
+    skillsListNoCD.Size = UDim2.new(0.9, 0, 0.4, 0)
+    skillsListNoCD.Position = UDim2.new(0.05, 0, 0.05, 40)
+    skillsListNoCD.BackgroundColor3 = theme.foreground
+    skillsListNoCD.BackgroundTransparency = 0.8
+    skillsListNoCD.ScrollBarThickness = 4
+    skillsListNoCD.Visible = false
+    skillsListNoCD.Parent = miscScrollFrame
+    skillsListNoCD.AutomaticCanvasSize = Enum.AutomaticSize.Y
+
+    local UIListLayoutNoCD = Instance.new("UIListLayout")
+    UIListLayoutNoCD.Parent = skillsListNoCD
+    UIListLayoutNoCD.Padding = UDim.new(0, 5)
+
+    -- Заполнение списка скиллами
+    for _, skillInfo in ipairs(skillData) do
+        local skillEntry = Instance.new("TextButton")
+    	skillEntry.Name = skillInfo.name
+    	skillEntry.Size = UDim2.new(1, 0, 0, 30)  -- Фиксированная высота каждого элемента
+    	skillEntry.BackgroundColor3 = theme.accent
+    	skillEntry.BackgroundTransparency = 0.1
+    	skillEntry.Text = skillInfo.name
+    	skillEntry.TextColor3 = theme.text
+    	skillEntry.Font = Enum.Font.GothamMedium
+    	skillEntry.TextSize = 14
+    	skillEntry.Parent = skillsListNoCD
+	
+	local icon = Instance.new("ImageLabel")
+    	icon.Size = UDim2.new(0, 20, 0, 20)  -- Размер картинки
+    	icon.Position = UDim2.new(1, -25, 0.5, -10)  -- Позиция справа с небольшим отступом
+    	icon.AnchorPoint = Vector2.new(1, 0.5)  -- Якорь справа по центру
+    	icon.BackgroundTransparency = 1
+    	icon.Image = skillInfo.image
+    	icon.Parent = skillEntry
+
+        skillEntry.TextXAlignment = Enum.TextXAlignment.Left
+        skillEntry.Text = skillInfo.name
+
+        skillEntry.MouseButton1Click:Connect(function()
+            selectedSkillNoCD = skillInfo.id
+            skillNoCDButton.Text = "Skill no CD (" .. skillInfo.name .. ")"
+            skillsListNoCD.Visible = false
+        end)
+    end
+
+    -- Обработка нажатия на стрелочку
+    arrow.MouseButton1Click:Connect(function()
+    	skillsListNoCD.Visible = not skillsListNoCD.Visible
+    	if skillsListNoCD.Visible then
+            skillsListNoCD.CanvasPosition = Vector2.new(0, 0)  -- Сбросить позицию прокрутки
+        end
+    end)
+
+    -- Обработка активности кнопки
+    skillNoCDButton.MouseButton1Click:Connect(function()
+    	isSkillNoCDActive = not isSkillNoCDActive
+    	skillNoCDButton.Text = isSkillNoCDActive and "Skill no CD (Active)" or "Skill no CD (Inactive)"
+	updateGuiState()
+    end)
+
+    local function fireServerWithSkill(skillID)
+        if workspace:FindFirstChild("Event") and workspace.Event:FindFirstChild("SkillModule_RemoteFunction") then
+            workspace.Event.SkillModule_RemoteFunction:InvokeServer({
+                TYPE = "EquipSkill",
+                Data = {
+                    SkillID = skillID
+                }
+            })
+        else
+            warn("SkillModule_RemoteFunction not found!")
         end
     end
-end)
+
+-- Основная функция проверки кулдауна и выполнения действий
+    spawn(function()
+        while true do
+            if isSkillNoCDActive and selectedSkillNoCD and selectedSkillNoCD ~= "" then
+                if isMobile then
+                    local playerGui = game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui")
+                    if playerGui and playerGui:FindFirstChild("MobileScr") then
+                        local mobileScr = playerGui.MobileScr
+                        if mobileScr and mobileScr:FindFirstChild("ControlFrame") then
+                            local controlFrame = mobileScr.ControlFrame
+                            if controlFrame and controlFrame:FindFirstChild("USE2") then
+                                local use2 = controlFrame.USE2
+                                if use2 and use2:FindFirstChild("CD") then
+                                    local cdFrame = use2.CD
+                                    if cdFrame.Size ~= UDim2.new(0.97, 0, 0, 0) then
+                                    -- Запускаем две функции одновременно
+                                        spawn(function() fireServerWithSkill("132002") end)
+                                        spawn(function() fireServerWithSkill(selectedSkillNoCD) end)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                else
+                -- Для ПК: проверяем кулдаун перед выполнением
+                    local playerGui = player:FindFirstChild("PlayerGui")
+                    if playerGui and playerGui:FindFirstChild("Lobby") then
+                        local lobby = playerGui.Lobby
+                        if lobby and lobby:FindFirstChild("UI_Skill") then
+                            local uiSkill = lobby.UI_Skill
+                            if uiSkill and uiSkill:FindFirstChild("List") then
+                                local list = uiSkill.List
+                                if list and list:FindFirstChild("Skill3") then
+                                    local skill3 = list.Skill3
+                                    if skill3 and skill3:FindFirstChild("CDFrame") then
+                                        local cdFrame = skill3.CDFrame
+                                        if cdFrame.Size ~= UDim2.new(1, 0, 0, 0) then
+                                        -- Запускаем две функции одновременно
+                                            spawn(function() fireServerWithSkill("132002") end)
+                                            spawn(function() fireServerWithSkill(selectedSkillNoCD) end)
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            wait(0.1)  -- Уменьшаем задержку для более частой проверки
+        end
+    end)
 
     local autoAttackButton = createModernButton("AutoAttack",
         settings.isAutoAttackEnabled and "Auto Attack: ON" or "Auto Attack: OFF",
@@ -874,35 +1233,42 @@ end)
         settings.isSkillFunctionActive = not settings.isSkillFunctionActive
         skillToggleButton.Text = settings.isSkillFunctionActive and "Skills: ON" or "Skills: OFF"
         updateGuiState()
+
+        if settings.isSkillFunctionActive and isMobile then
+            spawn(function()
+                while settings.isSkillFunctionActive do
+                    if #selectedSkills > 0 then
+                        local randomSkillID = selectedSkills[math.random(1, #selectedSkills)]
+                        workspace.Event.SkillModule_RemoteFunction:InvokeServer({
+                            TYPE = "EquipSkill",
+                            Data = { SkillID = randomSkillID }
+                        })
+                    end
+                    task.wait(0.01)
+                end
+            end)
+        end
     end)
 
+    autoSkillButton.MouseButton1Click:Connect(function()
+        settings.isAutoSkillActive = not settings.isAutoSkillActive
+        autoSkillButton.Text = settings.isAutoSkillActive and "Auto Skill: ON" or "Auto Skill: OFF"
+        updateGuiState()
 
-autoSkillButton.MouseButton1Click:Connect(function()
-    settings.isAutoSkillActive = not settings.isAutoSkillActive
-    autoSkillButton.Text = settings.isAutoSkillActive and "Auto Skill: ON" or "Auto Skill: OFF"
-    updateGuiState()
-
-    if settings.isAutoSkillActive then
-        spawn(function()
-            while settings.isAutoSkillActive do
-                if #selectedSkills > 0 then
-                    -- Simulate pressing the "3" key
-                    workspace.Player[playerName].Communicate:FireServer({
-                        Key = Enum.KeyCode.Three,
-                        State = Enum.UserInputState.Begin
-                    })
-                    -- Select and equip a random skill
-                    local randomSkillID = selectedSkills[math.random(1, #selectedSkills)]
-                    workspace.Event.SkillModule_RemoteFunction:InvokeServer({
-                        TYPE = "EquipSkill",
-                        Data = { SkillID = randomSkillID }
-                    })
+        if settings.isAutoSkillActive then
+            spawn(function()
+                while settings.isAutoSkillActive do
+                    if #selectedSkills > -1 then
+                        workspace.Player[playerName].Communicate:FireServer({
+                            Key = Enum.KeyCode.Three,
+                            State = Enum.UserInputState.Begin
+                        })
+                    end
+                    wait(0.01)
                 end
-                wait(0.1)  -- Small delay between attempts
-            end
-        end)
-    end
-end)
+            end)
+        end
+    end)
 
     -- Device cycling
     deviceButton.MouseButton1Click:Connect(function()
@@ -937,51 +1303,24 @@ end)
     end)
 
     -- VIP Settings
+    vipSettingsButton.MouseButton1Click:Connect(function()
+        settings.areVIPSettingsActive = not settings.areVIPSettingsActive
+        vipSettingsButton.Text = settings.areVIPSettingsActive and "VIP: ON" or "VIP: OFF"
+        updateGuiState()
 
--- ... existing code ...
-
-vipSettingsButton.MouseButton1Click:Connect(function()
-    settings.areVIPSettingsActive = not settings.areVIPSettingsActive
-    vipSettingsButton.Text = settings.areVIPSettingsActive and "VIP: ON" or "VIP: OFF"
-    updateGuiState()
-
-    -- First, reset all settings
-    workspace.Event.PlayerSetting_RemoteEvent:FireServer({
-        TYPE = "ResetAllSettings"
-    })
-    
-    task.wait(0.1)
-
-    -- Handle VIP tag first
-    workspace.Event.PlayerSetting_RemoteEvent:FireServer({
-        TYPE = "ChangeMySetting",
-        Data = {
-            Str = "HideVIPTag",
-            Value = settings.areVIPSettingsActive
+        local settingsToApply = {
+            {Str = "IsHideScores", Value = settings.areVIPSettingsActive},
+            {Str = "HideVIPTag", Value = settings.areVIPSettingsActive},
+            {Str = "HideTotalKills", Value = settings.areVIPSettingsActive}
         }
-    })
-
-    task.wait(0.1)
-
-    -- Then handle other settings
-    workspace.Event.PlayerSetting_RemoteEvent:FireServer({
-        TYPE = "ChangeMySetting",
-        Data = {
-            Str = "IsHideScores",
-            Value = settings.areVIPSettingsActive
-        }
-    })
-
-    workspace.Event.PlayerSetting_RemoteEvent:FireServer({
-        TYPE = "ChangeMySetting",
-        Data = {
-            Str = "HideTotalKills",
-            Value = settings.areVIPSettingsActive
-        }
-    })
-end)
-
--- ... existing code ...
+        
+        for _, setting in pairs(settingsToApply) do
+            workspace.Event.PlayerSetting_RemoteEvent:FireServer({
+                TYPE = "ChangeMySetting",
+                Data = setting
+            })
+        end
+    end)
 
     -- Window dragging
     local dragToggle, dragStart, startPos = nil, nil, nil
@@ -1045,7 +1384,6 @@ end)
 
     return screenGui, enhancedCleanup
 end
-
 -- Initialize GUI with proper visibility settings
 local function initializeGUI()
     local gui, cleanup = createGUI()
@@ -1132,7 +1470,6 @@ spawn(function()
         restoreGUI()
     end
 end)
-
 
 player.CharacterAdded:Connect(function()
     task.wait(0.5)
